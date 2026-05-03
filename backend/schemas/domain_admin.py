@@ -62,7 +62,7 @@ class MailboxListItem(BaseModel):
 class MailboxCreate(BaseModel):
     local_part: constr(
         min_length=1, max_length=64,
-        regex=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9]$"
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9]$"
     )
     password: constr(min_length=8)
     quota_mb: Optional[conint(ge=0)] = Field(default=1024)
@@ -149,7 +149,7 @@ class BackupRestoreResult(BaseModel):
 
 class SharedMailboxMemberAdd(BaseModel):
     email: EmailStr
-    permission: constr(regex=r"^(read_only|read_write|admin)$")
+    permission: constr(pattern=r"^(read_only|read_write|admin)$")
 
 
 class SharedMailboxDetail(BaseModel):
@@ -175,7 +175,7 @@ class WhitelabelSettings(BaseModel):
 
 class WhitelabelUpdate(BaseModel):
     logo_url: Optional[str]
-    primary_color: Optional[constr(regex=r"^#([A-Fa-f0-9]{6})$")]
+    primary_color: Optional[constr(pattern=r"^#([A-Fa-f0-9]{6})$")]
     company_name: Optional[constr(max_length=100)]
 
 
