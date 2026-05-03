@@ -9,7 +9,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useToast } from "@/hooks/use-toast";
+
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { getRoleFromToken } from "@/lib/jwt";
@@ -22,8 +22,23 @@ function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, setTempToken, clearTempToken, tempToken } = useAuth();
-  const { toast } = useToast();
   const setLoading = useAppStore((state) => state.setLoading);
+
+  const redirectUser = (role: string | null | undefined) => {
+    switch (role) {
+      case "super_admin":
+        router.push("/super-admin");
+        break;
+      case "domain_admin":
+        router.push("/domain-admin");
+        break;
+      case "user":
+        router.push("/mail/inbox");
+        break;
+      default:
+        router.push("/login");
+    }
+  };
 
   const [step, setStep] = useState<LoginStep>("credentials");
   const [email, setEmail] = useState("");
@@ -95,21 +110,6 @@ function LoginPageContent() {
     },
   });
 
-  const redirectUser = (role: string | undefined) => {
-    switch (role) {
-      case "super_admin":
-        router.push("/super-admin");
-        break;
-      case "domain_admin":
-        router.push("/domain-admin");
-        break;
-      case "user":
-        router.push("/mail/inbox");
-        break;
-      default:
-        router.push("/login");
-    }
-  };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
