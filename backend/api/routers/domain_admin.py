@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_role
+from api.deps import get_current_user, get_db, require_role, get_current_domain_admin
+from services.mailbox_service import MailboxService
+from config import get_settings
+import mailbox as py_mailbox
+import asyncio
 from core.security import hash_password
 from models.audit_log import AuditLog
 from models.domain import Domain
@@ -13,6 +17,7 @@ from models.mailbox import Mailbox
 from models.shared_mailbox import SharedMailbox
 from models.user import User, UserRole
 from schemas.domain import DomainResponse, InviteCreate
+from schemas.domain_admin import MailboxCreate
 from services.backup_service import create_domain_backup
 from services.domain_service import DomainService
 
@@ -24,7 +29,7 @@ router = APIRouter(prefix="/domain-admin", tags=["domain-admin"])
 @router.get("/domain", response_model=DomainResponse)
 async def my_domain(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain:
@@ -44,7 +49,7 @@ async def me(user=Depends(get_current_user)):
 @router.get("/stats")
 async def get_stats(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain_id = user.domain_id
     total_mailboxes = await db.scalar(
@@ -74,7 +79,7 @@ async def get_stats(
 @router.get("/dns-guide")
 async def dns_records(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain:
@@ -94,7 +99,7 @@ async def dns_records(
 @router.get("/mailboxes")
 async def list_mailboxes(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     rows = list(
         await db.scalars(
@@ -115,20 +120,18 @@ async def list_mailboxes(
 
 @router.post("/mailboxes")
 async def create_mailbox(
-    payload: dict,
+    payload: "MailboxCreate",
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
-    domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
+    # payload validated by Pydantic
+    domain = getattr(user, "domain", None) or await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain:
         raise HTTPException(status_code=404, detail="Domain not found")
 
-    local_part: str = payload.get("local_part", "").strip().lower()
-    password: str = payload.get("password", "")
-    quota_mb: int = int(payload.get("quota_mb", 2048))
-
-    if not local_part or not password:
-        raise HTTPException(status_code=422, detail="local_part and password are required")
+    local_part = payload.local_part.strip().lower()
+    password = payload.password
+    quota_mb = int(payload.quota_mb or 1024)
 
     email_address = f"{local_part}@{domain.name}"
 
@@ -136,6 +139,14 @@ async def create_mailbox(
     existing = await db.scalar(select(Mailbox).where(Mailbox.address == email_address))
     if existing:
         raise HTTPException(status_code=409, detail="Mailbox already exists")
+
+    # Calculate remaining domain quota (GB -> MB). Use domain.storage_quota_gb if present, else default 10GB
+    domain_quota_gb = int(getattr(domain, "storage_quota_gb", 10))
+    used_sum = await db.scalar(select(func.coalesce(func.sum(Mailbox.quota_mb), 0)).where(Mailbox.domain_id == domain.id))
+    used_sum = int(used_sum or 0)
+    remaining_mb = domain_quota_gb * 1024 - used_sum
+    if quota_mb > remaining_mb:
+        raise HTTPException(status_code=422, detail="Requested quota exceeds remaining domain quota")
 
     # Create user account for mailbox
     mailbox_user = User(
@@ -148,22 +159,37 @@ async def create_mailbox(
     db.add(mailbox_user)
     await db.flush()
 
-    mailbox = Mailbox(
-        domain_id=user.domain_id,
-        user_id=mailbox_user.id,
-        address=email_address,
-        quota_mb=quota_mb,
-        is_active=True,
-    )
-    db.add(mailbox)
+    # Create mailbox record via service
+    mb_service = MailboxService(db)
+    mailbox = await mb_service.create_mailbox(mailbox_user.id, user.domain_id, email_address, quota_mb)
     await db.commit()
     await db.refresh(mailbox)
+
+    # Provision maildir on disk (create Maildir folder)
+    maildir_base = get_settings().maildir_base
+
+    async def _ensure_maildir():
+        def _create():
+            path = f"{maildir_base}/{domain.name}/{local_part}"
+            py_mailbox.Maildir(path, create=True)
+
+        await asyncio.to_thread(_create)
+
+    await _ensure_maildir()
+
+    # Log audit entry
+    try:
+        db.add(AuditLog(user_id=user.id, action="create_mailbox", target=email_address, ip_address="0.0.0.0", extra={}))
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     return {
         "id": mailbox.id,
         "email": mailbox.address,
         "quota_mb": mailbox.quota_mb,
         "is_active": mailbox.is_active,
+        "import_options": {"mbox_url": None, "zip_url": None},
     }
 
 
@@ -172,7 +198,7 @@ async def update_mailbox(
     mailbox_id: str,
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     mailbox = await db.scalar(
         select(Mailbox).where(Mailbox.id == mailbox_id, Mailbox.domain_id == user.domain_id)
@@ -195,7 +221,7 @@ async def update_mailbox(
 async def delete_mailbox(
     mailbox_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     mailbox = await db.scalar(
         select(Mailbox).where(Mailbox.id == mailbox_id, Mailbox.domain_id == user.domain_id)
@@ -212,7 +238,7 @@ async def delete_mailbox(
 @router.get("/users")
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     rows = list(
         await db.scalars(
@@ -235,7 +261,7 @@ async def list_users(
 async def create_user(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     email: str = payload.get("email", "").strip().lower()
     password: str = payload.get("password", "")
@@ -268,7 +294,7 @@ async def create_user(
 async def invite_admin(
     payload: InviteCreate,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     invite = await DomainService(db).invite_domain_admin(user.domain_id, payload.email)
     return {"token": invite.token}
@@ -279,7 +305,7 @@ async def invite_admin(
 @router.get("/api-keys")
 async def list_api_keys(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     try:
         from models.api_key import ApiKey  # noqa: PLC0415
@@ -305,7 +331,7 @@ async def list_api_keys(
 async def create_api_key(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     import secrets  # noqa: PLC0415
     try:
@@ -330,7 +356,7 @@ async def create_api_key(
 @router.get("/audit-logs")
 async def domain_audit_logs(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     rows = list(
         await db.scalars(
@@ -357,7 +383,7 @@ async def domain_audit_logs(
 @router.get("/settings")
 async def get_domain_settings(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     return {
@@ -373,7 +399,7 @@ async def get_domain_settings(
 async def update_domain_settings(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain:
@@ -411,7 +437,7 @@ async def get_whitelabel(
 async def patch_whitelabel(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain:
@@ -439,7 +465,7 @@ async def patch_whitelabel(
 async def patch_retention(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     if not domain or not hasattr(domain, "retention_days"):
@@ -454,7 +480,7 @@ async def patch_retention(
 @router.get("/shared-mailboxes")
 async def list_shared_mailboxes(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     rows = list(
         await db.scalars(select(SharedMailbox).where(SharedMailbox.domain_id == user.domain_id))
@@ -476,7 +502,7 @@ async def list_shared_mailboxes(
 async def create_ediscovery_export(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     export = EDiscoveryExport(
         domain_id=user.domain_id,
@@ -495,7 +521,7 @@ async def create_ediscovery_export(
 @router.get("/ediscovery/exports")
 async def list_ediscovery_exports(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     rows = list(
         await db.scalars(
@@ -520,7 +546,7 @@ async def list_ediscovery_exports(
 @router.post("/backup")
 async def create_backup(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(UserRole.domain_admin, UserRole.super_admin)),
+    user=Depends(get_current_domain_admin),
 ):
     path = await create_domain_backup(user.domain_id, db)
     return {"status": "queued", "file_path": path}
