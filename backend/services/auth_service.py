@@ -44,7 +44,7 @@ class AuthService:
             if not totp_code or not pyotp.TOTP(totp.secret).verify(totp_code, valid_window=1):
                 return LoginResponse(tokens=TokenPair(access_token="", refresh_token=""), requires_totp=True)
 
-        access_token = create_access_token(user.id, user.role.value)
+        access_token = create_access_token(str(user.id), user.role.value, user.email)
         refresh_token = create_refresh_token(user.id)
         session = Session(
             user_id=user.id,
@@ -72,7 +72,8 @@ class AuthService:
             raise ValueError("Invalid refresh token")
         user = await self.db.get(User, user_id)
         role = user.role.value if user else ""
-        return TokenPair(access_token=create_access_token(user_id, role), refresh_token=create_refresh_token(user_id))
+        email = user.email if user else ""
+        return TokenPair(access_token=create_access_token(user_id, role, email), refresh_token=create_refresh_token(user_id))
 
     async def enable_totp(self, user_id: str) -> str:
         secret = pyotp.random_base32()

@@ -113,7 +113,7 @@ function Sidebar({
               <Avatar className="h-8 w-8">
                 <AvatarImage src={user?.avatar_url} />
                 <AvatarFallback>
-                  {user?.email?.[0].toUpperCase()}
+                  {user?.email?.[0]?.toUpperCase() ?? "A"}
                 </AvatarFallback>
               </Avatar>
               <div className="flex flex-col truncate">
