@@ -69,7 +69,7 @@ function LoginPageContent() {
     },
     onError: (err: any) => {
       const errorMessage =
-        err.response?.data?.detail || "Incorrect email or password";
+        err.response?.data?.detail || "Incorrect email or password pls try agin";
       if (errorMessage.includes("inactive")) {
         setError("Your account has been deactivated.");
       } else if (errorMessage.includes("suspended")) {
