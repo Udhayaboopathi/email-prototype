@@ -18,6 +18,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { getDomainAdminStats, getDomainDnsRecords } from "@/lib/api";
+import type { DnsRecord } from "@/types";
 
 const StatCard = ({
   title,
@@ -58,7 +59,7 @@ export default function DomainAdminDashboard() {
     queryFn: getDomainAdminStats,
   });
 
-  const { data: dnsRecords } = useQuery({
+  const { data: dnsRecords } = useQuery<DnsRecord[]>({
     queryKey: ["domainDnsRecords"],
     queryFn: getDomainDnsRecords,
   });
@@ -80,10 +81,13 @@ export default function DomainAdminDashboard() {
     );
   }
 
+  // Backend returns either storage_used_gb or used_storage_gb — normalise both
+  const usedGb: number =
+    (stats as any)?.storage_used_gb ?? (stats as any)?.used_storage_gb ?? 0;
+  const quotaGb: number = stats?.storage_quota_gb ?? 0;
+
   const storagePercent =
-    stats?.storage_quota_gb > 0
-      ? Math.round((stats.storage_used_gb / stats.storage_quota_gb) * 100)
-      : 0;
+    quotaGb > 0 ? Math.round((usedGb / quotaGb) * 100) : 0;
 
   const storageBarColor =
     storagePercent >= 90
@@ -91,6 +95,9 @@ export default function DomainAdminDashboard() {
       : storagePercent >= 70
       ? "bg-amber-500"
       : "bg-green-500";
+
+  // Normalise dnsRecords — always a plain array (api.ts unwraps { records: [...] })
+  const records: DnsRecord[] = Array.isArray(dnsRecords) ? dnsRecords : [];
 
   return (
     <div className="space-y-6">
@@ -135,7 +142,7 @@ export default function DomainAdminDashboard() {
         />
         <StatCard
           title="Storage Used"
-          value={`${stats?.storage_used_gb ?? 0} / ${stats?.storage_quota_gb ?? 0} GB`}
+          value={`${usedGb} / ${quotaGb} GB`}
           icon={HardDrive}
           description={`${storagePercent}% utilised`}
           colorClass="text-indigo-500"
@@ -157,7 +164,7 @@ export default function DomainAdminDashboard() {
             />
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {stats?.storage_used_gb ?? 0} GB used of {stats?.storage_quota_gb ?? 0} GB
+            {usedGb} GB used of {quotaGb} GB
           </p>
         </CardContent>
       </Card>
@@ -170,7 +177,7 @@ export default function DomainAdminDashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {!dnsRecords || dnsRecords.length === 0 ? (
+          {records.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">
               No DNS records found.
             </p>
@@ -186,7 +193,7 @@ export default function DomainAdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {dnsRecords.map((record, i) => (
+                  {records.map((record, i) => (
                     <tr key={i} className="text-gray-700 dark:text-gray-300">
                       <td className="py-2 pr-4">
                         <span className="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-bold">
