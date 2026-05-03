@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { getRoleFromToken } from "@/lib/jwt";
 import { Whitelabel } from "@/types";
 import { useAppStore } from "@/store";
 
@@ -63,12 +64,8 @@ function LoginPageContent() {
         setStep("totp");
       } else {
         login(data.access_token, data.refresh_token, rememberMe);
-        try {
-          const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-          redirectUser(payload.role);
-        } catch {
-          router.push("/mail/inbox");
-        }
+        const role = getRoleFromToken(data.access_token ?? "");
+        redirectUser(role);
       }
     },
     onError: (err: any) => {
@@ -89,12 +86,8 @@ function LoginPageContent() {
     onSuccess: (data) => {
       setError(null);
       login(data.access_token, data.refresh_token, rememberMe);
-      try {
-        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-        redirectUser(payload.role);
-      } catch {
-        router.push("/mail/inbox");
-      }
+      const role = getRoleFromToken(data.access_token ?? "");
+      redirectUser(role);
     },
     onError: () => {
       setError("Invalid code, please try again.");

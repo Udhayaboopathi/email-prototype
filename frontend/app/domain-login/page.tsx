@@ -7,6 +7,7 @@ import { Eye, EyeOff, Globe, Loader2, Mail } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { getRoleFromToken } from "@/lib/jwt";
 
 export default function DomainAdminLoginPage() {
   const router = useRouter();
@@ -20,17 +21,13 @@ export default function DomainAdminLoginPage() {
     mutationFn: () => api.login({ email, password }),
     onSuccess: (data) => {
       setError(null);
-      try {
-        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-        if (payload.role !== "domain_admin" && payload.role !== "super_admin") {
-          setError("Access denied. Domain admin credentials required.");
-          return;
-        }
-        login(data.access_token, data.refresh_token);
-        router.push("/domain-admin");
-      } catch {
-        setError("Invalid token received.");
+      const role = getRoleFromToken(data.access_token ?? "");
+      if (role !== "domain_admin" && role !== "super_admin") {
+        setError("Access denied. Domain admin credentials required.");
+        return;
       }
+      login(data.access_token, data.refresh_token);
+      router.push("/domain-admin");
     },
     onError: (err: unknown) => {
       const detail =

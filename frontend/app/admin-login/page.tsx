@@ -7,6 +7,7 @@ import { Eye, EyeOff, Shield, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { getRoleFromToken } from "@/lib/jwt";
 
 export default function SuperAdminLoginPage() {
   const router = useRouter();
@@ -20,17 +21,13 @@ export default function SuperAdminLoginPage() {
     mutationFn: () => api.login({ email, password }),
     onSuccess: (data) => {
       setError(null);
-      try {
-        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-        if (payload.role !== "super_admin") {
-          setError("Access denied. Super admin credentials required.");
-          return;
-        }
-        login(data.access_token, data.refresh_token);
-        router.push("/super-admin");
-      } catch {
-        setError("Invalid token received.");
+      const role = getRoleFromToken(data.access_token ?? "");
+      if (role !== "super_admin") {
+        setError("Access denied. Super admin credentials required.");
+        return;
       }
+      login(data.access_token, data.refresh_token);
+      router.push("/super-admin");
     },
     onError: (err: unknown) => {
       const detail =

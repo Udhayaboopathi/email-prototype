@@ -12,7 +12,12 @@ const AUTH_STORAGE_KEY = "auth-storage";
 // ─── JWT helpers ──────────────────────────────────────────────────────────────
 function decodeJwtPayload(token: string): Record<string, unknown> {
   try {
-    return JSON.parse(atob(token.split(".")[1]));
+    const base64url = token.split(".")[1];
+    if (!base64url) return {};
+    // Convert base64url → standard base64, then add padding
+    const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, "=");
+    return JSON.parse(atob(padded));
   } catch {
     return {};
   }
