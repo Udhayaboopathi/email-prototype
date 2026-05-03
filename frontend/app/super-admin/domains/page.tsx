@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getDomains, inviteDomainAdmin } from "@/lib/api";
+import { getSuperAdminDomains, inviteDomainAdmin } from "@/lib/api";
 import {
   Table,
   TableBody,
@@ -40,11 +40,11 @@ export default function DomainsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [isInviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteDomain, setInviteDomain] = useState("");
+  const [inviteDomainId, setInviteDomainId] = useState("");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["domains", { search: searchTerm, status: statusFilter }],
-    queryFn: () => getDomains({ search: searchTerm, status: statusFilter }),
+    queryFn: () => getSuperAdminDomains({ search: searchTerm, status: statusFilter }),
     placeholderData: (prev: unknown) => prev,
   });
 
@@ -54,7 +54,7 @@ export default function DomainsPage() {
       toast.success("Invitation sent successfully!");
       setInviteDialogOpen(false);
       setInviteEmail("");
-      setInviteDomain("");
+      setInviteDomainId("");
       queryClient.invalidateQueries({ queryKey: ["domains"] });
     },
     onError: (error: any) => {
@@ -63,11 +63,11 @@ export default function DomainsPage() {
   });
 
   const handleInvite = () => {
-    if (!inviteEmail || !inviteDomain) {
+    if (!inviteEmail || !inviteDomainId) {
       toast.warning("Please fill out all fields.");
       return;
     }
-    inviteMutation.mutate({ email: inviteEmail, domain: inviteDomain });
+    inviteMutation.mutate({ email: inviteEmail, domain_id: inviteDomainId });
   };
 
   const filteredDomains = Array.isArray(data) ? data : data?.domains ?? [];
@@ -121,13 +121,20 @@ export default function DomainsPage() {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="domain">Domain Name</Label>
-                <Input
+                <Label htmlFor="domain">Domain</Label>
+                <select
                   id="domain"
-                  value={inviteDomain}
-                  onChange={(e) => setInviteDomain(e.target.value)}
-                  placeholder="example.com"
-                />
+                  value={inviteDomainId}
+                  onChange={(e) => setInviteDomainId(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="">-- Select a domain --</option>
+                  {filteredDomains.map((d: any) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Admin Email</Label>
