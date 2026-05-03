@@ -1,4 +1,12 @@
 import axios from "axios";
+import type {
+  DomainAdminStats,
+  MailboxListItem,
+  MailboxCreateRequest,
+  MailboxCreateResponse,
+  DNSStatus,
+  DnsRecord,
+} from "@/types";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -54,7 +62,10 @@ axiosInstance.interceptors.response.use(
 );
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-export const login = async (credentials: { email: string; password: string }) => {
+export const login = async (credentials: {
+  email: string;
+  password: string;
+}) => {
   const data = (await axiosInstance.post("/auth/login", credentials)).data;
   // Backend may return { tokens: { access_token, refresh_token, ... }, requires_totp, ... }
   // OR a flat { access_token, refresh_token, ... }
@@ -71,7 +82,9 @@ export const logout = async () =>
 export const refreshToken = async (token: string) =>
   (await axiosInstance.post("/auth/refresh", { refresh_token: token })).data;
 
-export const requestPasswordReset = async (input: string | { email: string }) => {
+export const requestPasswordReset = async (
+  input: string | { email: string },
+) => {
   const email = typeof input === "string" ? input : input.email;
   // Backend route: POST /auth/forgot-password
   return (await axiosInstance.post("/auth/forgot-password", { email })).data;
@@ -91,19 +104,22 @@ export const verifyTotp = async (data: {
 export const getInvitedUserData = async (token: string) =>
   (await axiosInstance.get(`/auth/invite/${token}`)).data;
 
-export const acceptInvite = async (data: { token: string; [key: string]: unknown }) => {
+export const acceptInvite = async (data: {
+  token: string;
+  [key: string]: unknown;
+}) => {
   const { token, ...body } = data;
   return (await axiosInstance.post(`/auth/invite/${token}`, body)).data;
 };
 
 // Backend route: GET /auth/me
-export const getMe = async () =>
-  (await axiosInstance.get("/auth/me")).data;
+export const getMe = async () => (await axiosInstance.get("/auth/me")).data;
 
 // ─── Whitelabel ───────────────────────────────────────────────────────────────
 // Backend route: GET /domain-admin/whitelabel?domain=X  (public, no auth required)
 export const getWhitelabelSettings = async (domain: string) =>
-  (await axiosInstance.get("/domain-admin/whitelabel", { params: { domain } })).data;
+  (await axiosInstance.get("/domain-admin/whitelabel", { params: { domain } }))
+    .data;
 
 // Backend route: PATCH /domain-admin/whitelabel
 export const updateWhitelabel = async (data: Record<string, unknown>) =>
@@ -126,7 +142,8 @@ export const suspendDomain = async (domainId: string) =>
   (await axiosInstance.patch(`/super-admin/domains/${domainId}/suspend`)).data;
 
 export const unsuspendDomain = async (domainId: string) =>
-  (await axiosInstance.patch(`/super-admin/domains/${domainId}/unsuspend`)).data;
+  (await axiosInstance.patch(`/super-admin/domains/${domainId}/unsuspend`))
+    .data;
 
 export const inviteDomainAdmin = async (data: Record<string, unknown>) =>
   // Backend route: POST /super-admin/domains/invite
@@ -138,8 +155,9 @@ export const getSuperAdminBackups = async () =>
 export const createSuperAdminBackup = async () =>
   (await axiosInstance.post("/super-admin/backups")).data;
 
-export const getSuperAdminAuditLogs = async (params?: Record<string, unknown>) =>
-  (await axiosInstance.get("/super-admin/audit-logs", { params })).data;
+export const getSuperAdminAuditLogs = async (
+  params?: Record<string, unknown>,
+) => (await axiosInstance.get("/super-admin/audit-logs", { params })).data;
 
 export const getSuperAdminSettings = async () =>
   (await axiosInstance.get("/super-admin/settings")).data;
@@ -148,12 +166,13 @@ export const updateSuperAdminSettings = async (data: Record<string, unknown>) =>
   (await axiosInstance.put("/super-admin/settings", data)).data;
 
 // ─── Domain Admin ─────────────────────────────────────────────────────────────
-export const getDomainAdminStats = async () =>
+export const getDomainAdminStats = async (): Promise<DomainAdminStats> =>
   (await axiosInstance.get("/domain-admin/stats")).data;
 
 // Backend route: GET /domain-admin/dns-records (alias for /dns-guide)
-export const getDomainDnsRecords = async () =>
-  (await axiosInstance.get("/domain-admin/dns-records")).data;
+export const getDomainDnsRecords = async (): Promise<{
+  records: DnsRecord[];
+}> => (await axiosInstance.get("/domain-admin/dns-records")).data;
 
 export const getDomainUsers = async () =>
   (await axiosInstance.get("/domain-admin/users")).data;
@@ -161,14 +180,27 @@ export const getDomainUsers = async () =>
 export const createDomainUser = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/domain-admin/users", data)).data;
 
-export const getDomainMailboxes = async () =>
+export const getDomainMailboxes = async (): Promise<MailboxListItem[]> =>
   (await axiosInstance.get("/domain-admin/mailboxes")).data;
 
-export const createDomainMailbox = async (data: Record<string, unknown>) =>
+export const createDomainMailbox = async (
+  data: MailboxCreateRequest,
+): Promise<MailboxCreateResponse> =>
   (await axiosInstance.post("/domain-admin/mailboxes", data)).data;
 
-export const updateDomainMailbox = async (id: string, data: Record<string, unknown>) =>
-  (await axiosInstance.patch(`/domain-admin/mailboxes/${id}`, data)).data;
+export const getDomainDnsStatus = async (): Promise<DNSStatus> =>
+  (await axiosInstance.get("/domain-admin/dns/status")).data;
+
+export const verifyDomainDns = async () =>
+  (await axiosInstance.post("/domain-admin/dns/verify")).data;
+
+export const autoSetupDomainDns = async () =>
+  (await axiosInstance.post("/domain-admin/dns/auto")).data;
+
+export const updateDomainMailbox = async (
+  id: string,
+  data: Record<string, unknown>,
+) => (await axiosInstance.patch(`/domain-admin/mailboxes/${id}`, data)).data;
 
 export const deleteDomainMailbox = async (id: string) =>
   (await axiosInstance.delete(`/domain-admin/mailboxes/${id}`)).data;
@@ -226,8 +258,7 @@ export const createApiKey = async (data: Record<string, unknown>) =>
 export const deleteApiKey = async (id: string) =>
   (await axiosInstance.delete(`/api-keys/${id}`)).data;
 
-export const listRules = async () =>
-  (await axiosInstance.get("/rules")).data;
+export const listRules = async () => (await axiosInstance.get("/rules")).data;
 
 export const createRule = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/rules", data)).data;
@@ -238,8 +269,7 @@ export const updateRule = async (id: string, data: Record<string, unknown>) =>
 export const deleteRule = async (id: string) =>
   (await axiosInstance.delete(`/rules/${id}`)).data;
 
-export const listLabels = async () =>
-  (await axiosInstance.get("/labels")).data;
+export const listLabels = async () => (await axiosInstance.get("/labels")).data;
 
 export const createLabel = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/labels", data)).data;
@@ -256,8 +286,10 @@ export const listTemplates = async () =>
 export const createTemplate = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/templates", data)).data;
 
-export const updateTemplate = async (id: string, data: Record<string, unknown>) =>
-  (await axiosInstance.put(`/templates/${id}`, data)).data;
+export const updateTemplate = async (
+  id: string,
+  data: Record<string, unknown>,
+) => (await axiosInstance.put(`/templates/${id}`, data)).data;
 
 export const deleteTemplate = async (id: string) =>
   (await axiosInstance.delete(`/templates/${id}`)).data;
@@ -279,8 +311,7 @@ export const getLoginActivity = async () =>
   (await axiosInstance.get("/auth/login-activity")).data;
 
 // ─── Tasks / Notes ────────────────────────────────────────────────────────────
-export const listTasks = async () =>
-  (await axiosInstance.get("/tasks")).data;
+export const listTasks = async () => (await axiosInstance.get("/tasks")).data;
 
 export const createTask = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/tasks", data)).data;
@@ -291,8 +322,7 @@ export const updateTask = async (id: string, data: Record<string, unknown>) =>
 export const deleteTask = async (id: string) =>
   (await axiosInstance.delete(`/tasks/${id}`)).data;
 
-export const listNotes = async () =>
-  (await axiosInstance.get("/notes")).data;
+export const listNotes = async () => (await axiosInstance.get("/notes")).data;
 
 export const createNote = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/notes", data)).data;
@@ -310,8 +340,10 @@ export const listCalendarEvents = async () =>
 export const createCalendarEvent = async (data: Record<string, unknown>) =>
   (await axiosInstance.post("/calendar/events", data)).data;
 
-export const updateCalendarEvent = async (id: string, data: Record<string, unknown>) =>
-  (await axiosInstance.put(`/calendar/events/${id}`, data)).data;
+export const updateCalendarEvent = async (
+  id: string,
+  data: Record<string, unknown>,
+) => (await axiosInstance.put(`/calendar/events/${id}`, data)).data;
 
 export const deleteCalendarEvent = async (id: string) =>
   (await axiosInstance.delete(`/calendar/events/${id}`)).data;
@@ -373,6 +405,9 @@ export const api = {
   getDomainAdminStats,
   getDomainAdminDashboard: getDomainAdminStats,
   getDomainDnsRecords,
+  getDomainDnsStatus,
+  verifyDomainDns,
+  autoSetupDomainDns,
   getDomainUsers,
   createDomainUser,
   getDomainMailboxes,

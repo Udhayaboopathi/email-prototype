@@ -229,3 +229,71 @@ export interface LoginActivity {
   success?: string;
   created_at: string | null;
 }
+
+export interface DomainAdminStats {
+  domain_name: string;
+  storage_quota_gb: number;
+  used_storage_gb: number;
+  storage_percent: number;
+  storage_status: string;
+  total_mailboxes: number;
+  active_mailboxes: number;
+  inactive_mailboxes: number;
+  dns_verified: boolean;
+  dns_verified_at?: string | null;
+  whitelabel_enabled: boolean;
+  ediscovery_enabled: boolean;
+  retention_days: number;
+  total_aliases: number;
+  total_shared_mailboxes: number;
+  emails_sent_today: number;
+  emails_received_today: number;
+  last_backup_at?: string | null;
+  next_backup_at?: string | null;
+}
+
+export interface MailboxListItem {
+  id: string;
+  full_address?: string;
+  local_part?: string;
+  email?: string;
+  quota_mb: number;
+  used_mb?: number;
+  used_percent?: number;
+  storage_status?: string;
+  is_active: boolean;
+  last_login_at?: string | null;
+  created_at?: string | null;
+  has_autoresponder?: boolean;
+  alias_count?: number;
+  rules_count?: number;
+}
+
+export interface MailboxCreateRequest {
+  local_part: string;
+  password: string;
+  quota_mb?: number;
+  display_name?: string | null;
+}
+
+export interface MailboxCreateResponse {
+  id: string;
+  email: string;
+  quota_mb: number;
+  is_active: boolean;
+  import_options?: { mbox_url?: string | null; zip_url?: string | null };
+}
+
+export interface DNSStatusRecord {
+  expected: string;
+  actual?: string | null;
+  valid: boolean;
+}
+
+export interface DNSStatus {
+  domain_name: string;
+  server_ip: string;
+  records: Record<string, DNSStatusRecord>;
+  all_valid: boolean;
+  last_checked?: string | null;
+}
