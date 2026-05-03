@@ -152,16 +152,14 @@ export default function DomainsPage() {
       setInviteDomainId("");
       queryClient.invalidateQueries({ queryKey: ["domains"] });
 
-      if (data?.email_sent === false) {
-        // Email delivery failed — show invite URL so admin can share manually
-        toast.warning(
-          `Invite created but email delivery failed. Share this link manually:\n${data.invite_url}`,
-          { duration: 15000 }
-        );
-        // Also copy to clipboard automatically
+      // Email is always queued (background task) — show success + copy URL as fallback
+      toast.success(
+        `Invitation queued for ${data?.email || "the admin"}. Email will arrive shortly.`,
+        { duration: 6000 }
+      );
+      // Silently copy the invite URL to clipboard so admin has it as a backup
+      if (data?.invite_url) {
         navigator.clipboard.writeText(data.invite_url).catch(() => {});
-      } else {
-        toast.success(`Invitation email sent to ${data?.email || "the admin"}!`);
       }
     },
     onError: (error: any) => {

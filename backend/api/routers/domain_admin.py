@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -426,6 +426,7 @@ async def create_user(
 @router.post("/invites")
 async def invite_admin(
     payload: InviteCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_domain_admin),
 ):
@@ -435,17 +436,19 @@ async def invite_admin(
     domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
     domain_name = domain.name if domain else str(user.domain_id)
 
-    email_sent = await send_domain_admin_invite(
+    from config import get_settings as _gs  # noqa: PLC0415
+    invite_url = f"{_gs().invite_base_url}/invite/{invite.token}"
+
+    # Fire-and-forget: return instantly, send email in background
+    background_tasks.add_task(
+        send_domain_admin_invite,
         to_email=payload.email,
         domain_name=domain_name,
         invite_token=invite.token,
         invited_by_email=user.email,
     )
 
-    from config import get_settings as _gs  # noqa: PLC0415
-    invite_url = f"{_gs().invite_base_url}/invite/{invite.token}"
-
-    return {"token": invite.token, "email_sent": email_sent, "invite_url": invite_url}
+    return {"token": invite.token, "email_sent": "queued", "invite_url": invite_url}
 
 
 # ─── API Keys ─────────────────────────────────────────────────────────────────

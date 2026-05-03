@@ -43,26 +43,35 @@ class OutboundSMTPClient:
                 failed.append(recipient)
                 continue
             delivered = False
-            mx_records = await self._resolve_mx(recipient)
+            try:
+                mx_records = await self._resolve_mx(recipient)
+            except Exception:
+                failed.append(recipient)
+                continue
+
             for _, mx_host in mx_records:
                 for attempt in range(1, self.max_retries + 1):
-                    try:
-                        await aiosmtplib.send(
-                            signed_message,
-                            hostname=mx_host,
-                            port=25,
-                            sender=envelope_from,
-                            recipients=[recipient],
-                            timeout=30,
-                            start_tls=True,
-                        )
-                        delivered = True
+                    # Try STARTTLS first, fall back to plain if it fails
+                    for use_tls in (True, False):
+                        try:
+                            await aiosmtplib.send(
+                                signed_message,
+                                hostname=mx_host,
+                                port=25,
+                                sender=envelope_from,
+                                recipients=[recipient],
+                                timeout=10,          # 10s per attempt (was 30s)
+                                start_tls=use_tls,
+                            )
+                            delivered = True
+                            break
+                        except Exception:
+                            if not use_tls:
+                                # Both TLS and plain failed for this attempt
+                                if attempt < self.max_retries:
+                                    await asyncio.sleep(2 ** attempt)
+                    if delivered:
                         break
-                    except Exception:
-                        if attempt == self.max_retries:
-                            await asyncio.sleep(0)
-                        else:
-                            await asyncio.sleep(2**attempt)
                 if delivered:
                     break
             if not delivered:

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,10 +164,11 @@ async def regenerate_dkim(
 @router.post("/domains/invite")
 async def invite_domain_admin(
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(UserRole.super_admin)),
 ):
-    """Create a domain-admin invite token and send an invitation email."""
+    """Create a domain-admin invite token and queue an invitation email in the background."""
     domain_id: str = payload.get("domain_id", "")
     email: str = payload.get("email", "")
     if not domain_id or not email:
@@ -180,8 +181,12 @@ async def invite_domain_admin(
     domain = await db.get(Domain, domain_id)
     domain_name = domain.name if domain else domain_id
 
-    # Send invitation email (non-fatal if delivery fails)
-    email_sent = await send_domain_admin_invite(
+    settings = __import__("config").get_settings()
+    invite_url = f"{settings.invite_base_url}/invite/{invite.token}"
+
+    # Fire-and-forget: send email in background so this endpoint returns instantly
+    background_tasks.add_task(
+        send_domain_admin_invite,
         to_email=email,
         domain_name=domain_name,
         invite_token=invite.token,
@@ -191,9 +196,8 @@ async def invite_domain_admin(
     return {
         "token": invite.token,
         "email": email,
-        "email_sent": email_sent,
-        # Include the invite URL in the response so the super admin can share it manually
-        "invite_url": f"{__import__('config').get_settings().invite_base_url}/invite/{invite.token}",
+        "email_sent": "queued",
+        "invite_url": invite_url,
     }
 
 
