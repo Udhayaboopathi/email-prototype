@@ -54,8 +54,16 @@ axiosInstance.interceptors.response.use(
 );
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-export const login = async (credentials: { email: string; password: string }) =>
-  (await axiosInstance.post("/auth/login", credentials)).data;
+export const login = async (credentials: { email: string; password: string }) => {
+  const data = (await axiosInstance.post("/auth/login", credentials)).data;
+  // Backend may return { tokens: { access_token, refresh_token, ... }, requires_totp, ... }
+  // OR a flat { access_token, refresh_token, ... }
+  // Normalize to always expose access_token / refresh_token at the top level.
+  if (data?.tokens && !data.access_token) {
+    return { ...data, ...data.tokens };
+  }
+  return data;
+};
 
 export const logout = async () =>
   (await axiosInstance.post("/auth/logout")).data;
