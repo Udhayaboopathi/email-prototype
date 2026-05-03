@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSuperAdminDomains, inviteDomainAdmin } from "@/lib/api";
+import { getSuperAdminDomains, inviteDomainAdmin, createDomain } from "@/lib/api";
 import {
   Table,
   TableBody,
@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreHorizontal, PlusCircle } from "lucide-react";
+import { MoreHorizontal, PlusCircle, Globe } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +41,8 @@ export default function DomainsPage() {
   const [isInviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDomainId, setInviteDomainId] = useState("");
+  const [isAddDomainOpen, setAddDomainOpen] = useState(false);
+  const [newDomainName, setNewDomainName] = useState("");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["domains", { search: searchTerm, status: statusFilter }],
@@ -61,6 +63,28 @@ export default function DomainsPage() {
       toast.error(error.response?.data?.detail || "Failed to send invitation.");
     },
   });
+
+  const addDomainMutation = useMutation({
+    mutationFn: (name: string) => createDomain({ name }),
+    onSuccess: () => {
+      toast.success("Domain added successfully!");
+      setAddDomainOpen(false);
+      setNewDomainName("");
+      queryClient.invalidateQueries({ queryKey: ["domains"] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.detail || "Failed to add domain.");
+    },
+  });
+
+  const handleAddDomain = () => {
+    const trimmed = newDomainName.trim();
+    if (!trimmed) {
+      toast.warning("Please enter a domain name.");
+      return;
+    }
+    addDomainMutation.mutate(trimmed);
+  };
 
   const handleInvite = () => {
     if (!inviteEmail || !inviteDomainId) {
@@ -105,6 +129,47 @@ export default function DomainsPage() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        <div className="flex items-center space-x-2">
+        {/* ── Add Domain ── */}
+        <Dialog open={isAddDomainOpen} onOpenChange={setAddDomainOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline">
+              <Globe className="mr-2 h-4 w-4" />
+              Add Domain
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add New Domain</DialogTitle>
+              <DialogDescription>
+                Register a new domain on the platform. You can assign an admin after creation.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="new-domain-name">Domain Name</Label>
+                <Input
+                  id="new-domain-name"
+                  type="text"
+                  value={newDomainName}
+                  onChange={(e) => setNewDomainName(e.target.value)}
+                  placeholder="example.com"
+                  onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddDomainOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleAddDomain} disabled={addDomainMutation.isPending}>
+                {addDomainMutation.isPending ? "Adding..." : "Add Domain"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Invite Domain Admin ── */}
         <Dialog open={isInviteDialogOpen} onOpenChange={setInviteDialogOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -163,6 +228,7 @@ export default function DomainsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
