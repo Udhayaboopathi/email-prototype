@@ -20,6 +20,10 @@ from schemas.domain import DomainResponse, InviteCreate
 from schemas.domain_admin import MailboxCreate
 from services.backup_service import create_domain_backup
 from services.domain_service import DomainService
+from services.dns_guide_service import DNSGuideService
+import dns.resolver
+import dns.reversename
+from datetime import datetime as _dt
 
 router = APIRouter(prefix="/domain-admin", tags=["domain-admin"])
 
@@ -85,13 +89,135 @@ async def dns_records(
     if not domain:
         raise HTTPException(status_code=404, detail="Domain not found")
     domain_name = domain.name
-    return [
-        {"type": "MX", "name": domain_name, "value": f"mail.{domain_name}", "ttl": "3600", "priority": "10", "purpose": "Receive email"},
-        {"type": "A", "name": f"mail.{domain_name}", "value": "YOUR_SERVER_IP", "ttl": "3600", "priority": "", "purpose": "Mail server IP"},
-        {"type": "TXT", "name": domain_name, "value": f"v=spf1 mx a:{domain_name} ~all", "ttl": "3600", "priority": "", "purpose": "SPF — prevent spoofing"},
-        {"type": "TXT", "name": f"_dmarc.{domain_name}", "value": f"v=DMARC1; p=quarantine; rua=mailto:admin@{domain_name}", "ttl": "3600", "priority": "", "purpose": "DMARC policy"},
-        {"type": "TXT", "name": f"mail._domainkey.{domain_name}", "value": domain.dkim_public_key or "DKIM key not yet generated — restart the backend to generate", "ttl": "3600", "priority": "", "purpose": "DKIM email signing"},
-    ]
+    # Use DNSGuideService to produce expected records
+    guide = DNSGuideService()
+    return {"records": guide.records_for_domain(domain_name)}
+
+
+
+def _resolve_txt(name: str) -> list[str]:
+    try:
+        answers = dns.resolver.resolve(name, "TXT", lifetime=5)
+        return [b"".join(r.strings).decode() if hasattr(r, "strings") else str(r) for r in answers]
+    except Exception:
+        return []
+
+
+def _resolve_a(name: str) -> list[str]:
+    try:
+        answers = dns.resolver.resolve(name, "A", lifetime=5)
+        return [str(r.address) for r in answers]
+    except Exception:
+        return []
+
+
+def _resolve_mx(name: str) -> list[str]:
+    try:
+        answers = dns.resolver.resolve(name, "MX", lifetime=5)
+        return [str(r.exchange).rstrip(".") for r in answers]
+    except Exception:
+        return []
+
+
+@router.get("/dns/status")
+async def dns_status(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_domain_admin),
+):
+    domain = getattr(user, "domain", None) or await db.scalar(select(Domain).where(Domain.id == user.domain_id))
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    domain_name = domain.name
+    settings = get_settings()
+    server_ip = settings.server_ip
+
+    expected_mx = f"mail.{domain_name}"
+    expected_a = f"mail.{domain_name}"
+    expected_spf = f"v=spf1 mx a:{domain_name} ~all"
+    selector = settings.dkim_selector
+    expected_dkim_name = f"{selector}._domainkey.{domain_name}"
+    expected_dmarc = f"v=DMARC1; p=quarantine; rua=mailto:admin@{domain_name}"
+
+    actual_mx = _resolve_mx(domain_name)
+    actual_a = _resolve_a(expected_a)
+    actual_spf = _resolve_txt(domain_name)
+    actual_dkim = _resolve_txt(expected_dkim_name)
+    actual_dmarc = _resolve_txt(f"_dmarc.{domain_name}")
+
+    # PTR: reverse lookup of server_ip
+    try:
+        rev = dns.reversename.from_address(server_ip)
+        ptr_answers = dns.resolver.resolve(rev, "PTR", lifetime=5)
+        actual_ptr = [str(r.target).rstrip(".") for r in ptr_answers]
+    except Exception:
+        actual_ptr = []
+
+    records = {
+        "mx": {"expected": expected_mx, "actual": ",".join(actual_mx) if actual_mx else None, "valid": expected_mx in actual_mx},
+        "a": {"expected": expected_a, "actual": ",".join(actual_a) if actual_a else None, "valid": server_ip in actual_a},
+        "spf": {"expected": expected_spf, "actual": ",".join(actual_spf) if actual_spf else None, "valid": any(expected_spf in s for s in actual_spf)},
+        "dkim": {"expected": getattr(domain, "dkim_public_key", ""), "actual": ",".join(actual_dkim) if actual_dkim else None, "valid": any(getattr(domain, "dkim_public_key", "") in s for s in actual_dkim) if getattr(domain, "dkim_public_key", None) else False},
+        "dmarc": {"expected": expected_dmarc, "actual": ",".join(actual_dmarc) if actual_dmarc else None, "valid": any("v=DMARC1" in s for s in actual_dmarc)},
+        "ptr": {"expected": f"mail.{domain_name}", "actual": ",".join(actual_ptr) if actual_ptr else None, "valid": any(f"mail.{domain_name}" in p for p in actual_ptr)},
+    }
+
+    all_valid = all(r["valid"] for r in records.values())
+
+    dns_verified_at = getattr(domain, "dns_verified_at", None)
+    return {
+        "domain_name": domain_name,
+        "server_ip": server_ip,
+        "records": records,
+        "all_valid": all_valid,
+        "last_checked": dns_verified_at,
+    }
+
+
+@router.post("/dns/verify")
+async def dns_verify(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_domain_admin),
+):
+    status = await dns_status(db=db, user=user)
+    domain = getattr(user, "domain", None) or await db.scalar(select(Domain).where(Domain.id == user.domain_id))
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if status.get("all_valid"):
+        setattr(domain, "is_verified", True)
+        setattr(domain, "dns_verified_at", _dt.now())
+        await db.commit()
+    return status
+
+
+@router.post("/dns/auto")
+async def dns_auto(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_domain_admin),
+):
+    domain = getattr(user, "domain", None) or await db.scalar(select(Domain).where(Domain.id == user.domain_id))
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    token = getattr(domain, "cloudflare_token_encrypted", None) or getattr(domain, "cloudflare_api_token", None)
+    if not token:
+        raise HTTPException(status_code=400, detail="No Cloudflare token configured for domain")
+    # If token is encrypted, assume it's stored plaintext for now
+    cf = CloudflareService(token)  # type: ignore[name-defined]
+    # Attempt to find zone
+    zones = await cf.list_zones()
+    zone = next((z for z in zones if z.get("name") == domain.name), None)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Cloudflare zone not found for domain")
+    zone_id = zone.get("id")
+    guide = DNSGuideService()
+    records = guide.records_for_domain(domain.name)
+    results = []
+    for rec in records:
+        try:
+            resp = await cf.create_dns_record(zone_id, rec["type"], rec["name"], rec["value"], proxied=False)
+            results.append({"record": rec, "result": resp})
+        except Exception as exc:
+            results.append({"record": rec, "error": str(exc)})
+    return {"success": True, "records_created": len([r for r in results if "result" in r]), "errors": [r for r in results if "error" in r], "details": results}
 
 
 # ─── Mailboxes ────────────────────────────────────────────────────────────────
