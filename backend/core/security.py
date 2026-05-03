@@ -1,21 +1,19 @@
+import bcrypt as _bcrypt
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from config import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(password, hashed_password)
+    return _bcrypt.checkpw(password.encode(), hashed_password.encode())
 
 
 def issue_jwt(payload: dict[str, Any], expires_delta: timedelta) -> str:

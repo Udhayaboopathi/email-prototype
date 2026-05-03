@@ -11,7 +11,12 @@ from models import *  # noqa: F401,F403
 
 config = context.config
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))
+
+# Offline mode needs a sync (psycopg2-compatible) URL → strip +asyncpg
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.database_url.replace("+asyncpg", ""),
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -21,7 +26,12 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"})
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -33,8 +43,11 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    # Online mode MUST use +asyncpg — override with the original DATABASE_URL
+    cfg = dict(config.get_section(config.config_ini_section, {}))
+    cfg["sqlalchemy.url"] = settings.database_url  # keep +asyncpg driver
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        cfg,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
