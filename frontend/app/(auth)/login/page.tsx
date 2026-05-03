@@ -200,7 +200,7 @@ function LoginPageContent() {
           {whitelabel?.logo_url ? (
             <img
               src={whitelabel.logo_url}
-              alt={whitelabel.company_name}
+              alt={whitelabel.company_name ?? "Company logo"}
               className="h-16 w-auto"
             />
           ) : (
