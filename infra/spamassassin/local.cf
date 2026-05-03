@@ -1,0 +1,11 @@
+required_score 5.0
+rewrite_header Subject [SPAM]
+use_bayes 1
+bayes_auto_learn 1
+skip_rbl_checks 0
+report_safe 0
+add_header all Report _REPORT_
+add_header all Score _SCORE_
+add_header all Status _YESNO_, score=_SCORE_ required=_REQD_
+use_razor2 0
+use_pyzor 0

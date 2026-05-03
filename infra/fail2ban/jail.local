@@ -1,0 +1,18 @@
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = auto
+
+[postfix]
+enabled = true
+port = smtp,ssmtp,submission
+logpath = /var/log/mail.log
+maxretry = 5
+
+[imap-auth]
+enabled = true
+port = imap,imaps,pop3,pop3s,submission
+filter = dovecot
+logpath = /var/log/mail.log
+maxretry = 5

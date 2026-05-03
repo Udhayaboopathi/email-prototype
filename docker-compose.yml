@@ -1,0 +1,186 @@
+version: "3.9"
+
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL}
+  REDIS_URL: ${REDIS_URL}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+  ENCRYPTION_SECRET_KEY: ${ENCRYPTION_SECRET_KEY}
+  MAILDIR_BASE: ${MAILDIR_BASE}
+  SERVER_IP: ${SERVER_IP}
+  SMTP_HOSTNAME: ${SMTP_HOSTNAME}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  SPAMASSASSIN_HOST: ${SPAMASSASSIN_HOST}
+  CLAMAV_HOST: ${CLAMAV_HOST}
+  FRONTEND_URL: ${FRONTEND_URL}
+  TRACKING_BASE_URL: ${TRACKING_BASE_URL}
+  MAX_MESSAGE_SIZE_MB: ${MAX_MESSAGE_SIZE_MB}
+  DKIM_SELECTOR: ${DKIM_SELECTOR}
+  AI_SUMMARY_ENABLED: ${AI_SUMMARY_ENABLED}
+  AI_SMART_REPLY_ENABLED: ${AI_SMART_REPLY_ENABLED}
+  AI_PRIORITY_INBOX_ENABLED: ${AI_PRIORITY_INBOX_ENABLED}
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
+  SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+  INVITE_BASE_URL: ${INVITE_BASE_URL}
+  NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+  TRACKING_ENABLED: ${TRACKING_ENABLED}
+  JWT_ALGORITHM: ${JWT_ALGORITHM}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    ports:
+      - "25:25"
+      - "587:587"
+      - "993:993"
+      - "8000:8000"
+    volumes:
+      - maildata:/var/mail
+      - ./nginx/ssl:/etc/ssl/mail:ro
+      - ./infra/dkim:/etc/dkim:ro
+    environment: *backend-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      spamassassin: { condition: service_started }
+      clamav: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  celery-worker:
+    build: ./backend
+    command: celery -A tasks.celery_app worker --loglevel=info -c 4
+    volumes:
+      - maildata:/var/mail
+    environment: *backend-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "celery", "-A", "tasks.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  celery-beat:
+    build: ./backend
+    command: celery -A tasks.celery_app beat --loglevel=info
+    environment: *backend-env
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -q '[c]elery.*beat'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+    depends_on:
+      backend: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      frontend: { condition: service_healthy }
+      backend: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  spamassassin:
+    image: instantlinux/spamassassin:latest
+    volumes:
+      - ./infra/spamassassin:/etc/spamassassin
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 783 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:latest
+    volumes:
+      - ./infra/clamav:/etc/clamav
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --version >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./infra/fail2ban:/data
+      - /var/log:/var/log:ro
+    healthcheck:
+      test: ["CMD-SHELL", "fail2ban-client ping | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  maildata:
+  clamav_data:
