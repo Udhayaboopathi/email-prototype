@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSuperAdminDomains, inviteDomainAdmin, createDomain } from "@/lib/api";
+import { getSuperAdminDomains, inviteDomainAdmin, createDomain, regenerateDkim } from "@/lib/api";
 import {
   Table,
   TableBody,
@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   Info,
   Copy,
+  KeyRound,
+  RefreshCw,
 } from "lucide-react";
 import {
   Dialog,
@@ -74,6 +76,13 @@ interface CreateDomainResult {
   cloudflare_error: string | null;
 }
 
+interface DkimResult {
+  domain: string;
+  selector: string;
+  dns_record: { type: string; name: string; value: string };
+  cloudflare: string | null;
+}
+
 const EMPTY_FORM: DomainForm = {
   name: "",
   admin_email: "",
@@ -102,6 +111,11 @@ export default function DomainsPage() {
   const [isInviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDomainId, setInviteDomainId] = useState("");
+
+  // ── DKIM regeneration dialog state
+  const [dkimDialogOpen, setDkimDialogOpen] = useState(false);
+  const [dkimResult, setDkimResult] = useState<DkimResult | null>(null);
+  const [dkimLoading, setDkimLoading] = useState<string | null>(null); // domainId being processed
 
   // ── Data fetching
   const { data, isLoading, error } = useQuery({
@@ -143,6 +157,25 @@ export default function DomainsPage() {
       toast.error(error.response?.data?.detail || "Failed to send invitation.");
     },
   });
+
+  const handleRegenerateDkim = async (domainId: string) => {
+    setDkimLoading(domainId);
+    try {
+      const result: DkimResult = await regenerateDkim(domainId);
+      setDkimResult(result);
+      setDkimDialogOpen(true);
+      const cfMsg = result.cloudflare === "pushed_to_cloudflare"
+        ? " DKIM record pushed to Cloudflare automatically."
+        : result.cloudflare === "no_cloudflare_zone"
+        ? " Add the TXT record manually (no Cloudflare zone linked)."
+        : ` Cloudflare note: ${result.cloudflare}`;
+      toast.success(`DKIM key regenerated for ${result.domain}.${cfMsg}`);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed to regenerate DKIM key.");
+    } finally {
+      setDkimLoading(null);
+    }
+  };
 
   // ── Handlers
   const handleFormChange = (key: keyof DomainForm, value: string) =>
@@ -659,14 +692,24 @@ export default function DomainsPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>View Details</DropdownMenuItem>
-                      <DropdownMenuItem>
-                        {domain.is_suspended ? "Unsuspend Domain" : "Suspend Domain"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className="text-red-600">
-                        Delete Domain
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
+                        <DropdownMenuItem>View Details</DropdownMenuItem>
+                        <DropdownMenuItem>
+                          {domain.is_suspended ? "Unsuspend Domain" : "Suspend Domain"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => handleRegenerateDkim(domain.id)}
+                          disabled={dkimLoading === domain.id}
+                          className="flex items-center gap-2"
+                        >
+                          {dkimLoading === domain.id
+                            ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            : <KeyRound className="h-3.5 w-3.5" />}
+                          Regenerate DKIM Key
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="text-red-600">
+                          Delete Domain
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
               </TableRow>
@@ -674,6 +717,109 @@ export default function DomainsPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {/* ── DKIM Result Dialog ── */}
+      <DkimResultDialog
+        open={dkimDialogOpen}
+        onClose={() => { setDkimDialogOpen(false); setDkimResult(null); }}
+        result={dkimResult}
+      />
     </div>
+  );
+}
+
+// ── DKIM Result Dialog (rendered outside the table for clean portal) ──────────
+function DkimResultDialog({
+  open,
+  onClose,
+  result,
+}: {
+  open: boolean;
+  onClose: () => void;
+  result: DkimResult | null;
+}) {
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success("Copied!");
+  };
+  if (!result) return null;
+  const cfOk = result.cloudflare === "pushed_to_cloudflare";
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-[540px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5 text-primary" />
+            DKIM Key Generated — {result.domain}
+          </DialogTitle>
+          <DialogDescription>
+            A new RSA-2048 DKIM key pair has been generated. The private key is
+            saved on the mail server. Add the TXT record below to your DNS.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {/* Cloudflare status */}
+          <div className={`rounded-md border p-3 text-sm ${
+            cfOk
+              ? "border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+          }`}>
+            {cfOk ? (
+              <p className="flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="h-4 w-4" />
+                DKIM TXT record automatically added to Cloudflare
+              </p>
+            ) : (
+              <p className="flex items-center gap-1.5 font-medium">
+                <Info className="h-4 w-4" />
+                {result.cloudflare === "no_cloudflare_zone"
+                  ? "No Cloudflare zone linked — add the record manually below"
+                  : result.cloudflare}
+              </p>
+            )}
+          </div>
+
+          {/* DNS record */}
+          <div className="space-y-1">
+            <p className="text-sm font-medium">DNS TXT Record</p>
+            <div className="rounded-md border bg-muted/40 p-3 text-xs font-mono space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Type</span>
+                <Badge variant="outline">TXT</Badge>
+              </div>
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-muted-foreground shrink-0">Name</span>
+                <span className="break-all text-right">{result.dns_record.name}</span>
+              </div>
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-muted-foreground shrink-0">Value</span>
+                <div className="flex items-start gap-1">
+                  <span className="break-all text-right max-w-[340px]">{result.dns_record.value}</span>
+                  <button
+                    onClick={() => copyToClipboard(result.dns_record.value)}
+                    className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
+                    title="Copy value"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-xs text-blue-700 dark:text-blue-400 space-y-1">
+            <p className="font-medium">After adding this record:</p>
+            <p>• Emails from <strong>{result.domain}</strong> will show <code className="bg-blue-500/10 px-1 rounded">signed-by: {result.domain}</code></p>
+            <p>• DNS propagation can take up to 24 hours</p>
+            <p>• Use <strong>Verify DNS</strong> in the domain admin panel to confirm</p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

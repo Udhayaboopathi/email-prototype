@@ -67,7 +67,7 @@ services:
     volumes:
       - maildata:/var/mail
       - ./nginx/ssl:/etc/ssl/mail:ro
-      - ./infra/dkim:/etc/dkim:ro
+      - ./infra/dkim:/app/infra/dkim
     environment: *backend-env
     depends_on:
       postgres: { condition: service_healthy }
@@ -86,6 +86,7 @@ services:
     command: celery -A tasks.celery_app worker --loglevel=info -c 4
     volumes:
       - maildata:/var/mail
+      - ./infra/dkim:/app/infra/dkim
     environment: *backend-env
     depends_on:
       postgres: { condition: service_healthy }

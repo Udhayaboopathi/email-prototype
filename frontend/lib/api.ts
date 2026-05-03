@@ -145,6 +145,9 @@ export const unsuspendDomain = async (domainId: string) =>
   (await axiosInstance.patch(`/super-admin/domains/${domainId}/unsuspend`))
     .data;
 
+export const regenerateDkim = async (domainId: string) =>
+  (await axiosInstance.post(`/super-admin/domains/${domainId}/regenerate-dkim`)).data;
+
 export const inviteDomainAdmin = async (data: Record<string, unknown>) =>
   // Backend route: POST /super-admin/domains/invite
   (await axiosInstance.post("/super-admin/domains/invite", data)).data;

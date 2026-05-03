@@ -14,6 +14,7 @@ from schemas.admin import AuditLogResponse
 from schemas.domain import DomainCreate, DomainResponse
 from services.domain_service import DomainService
 from services.cloudflare_service import CloudflareService
+from smtp.dkim import generate_dkim_keypair, save_dkim_private_key, get_dkim_private_key
 
 router = APIRouter(prefix="/super-admin", tags=["super-admin"])
 
@@ -100,6 +101,63 @@ async def list_domains(
         )
         for row in rows
     ]
+
+
+@router.post("/domains/{domain_id}/regenerate-dkim")
+async def regenerate_dkim(
+    domain_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """
+    Generate (or regenerate) the DKIM key pair for an existing domain.
+    - Saves the private key to infra/dkim/keys/<domain>/mail.private
+    - Updates Domain.dkim_public_key in the DB
+    - If the domain has a cloudflare_zone_id, pushes the new DKIM TXT record automatically
+    Returns the DNS TXT record value so the admin can add it manually if needed.
+    """
+    from config import get_settings  # noqa: PLC0415
+    settings = get_settings()
+
+    domain = await db.get(Domain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    # Generate fresh key pair
+    private_pem, pub_b64, dkim_txt_value = generate_dkim_keypair(domain.name)
+    save_dkim_private_key(domain.name, private_pem)
+    domain.dkim_public_key = pub_b64
+
+    # Try to push to Cloudflare if zone_id exists
+    cf_result: str | None = None
+    zone_id = getattr(domain, "cloudflare_zone_id", None)
+    if zone_id:
+        try:
+            cf = CloudflareService(settings.cloudflare_api_token or "")
+            await cf.create_dns_record(
+                zone_id=zone_id,
+                record_type="TXT",
+                name=f"{settings.dkim_selector}._domainkey.{domain.name}",
+                content=dkim_txt_value,
+            )
+            cf_result = "pushed_to_cloudflare"
+        except Exception as exc:
+            cf_result = f"cloudflare_error: {exc}"
+    else:
+        cf_result = "no_cloudflare_zone"
+
+    await db.commit()
+
+    return {
+        "domain": domain.name,
+        "selector": settings.dkim_selector,
+        "dns_record": {
+            "type": "TXT",
+            "name": f"{settings.dkim_selector}._domainkey.{domain.name}",
+            "value": dkim_txt_value,
+        },
+        "cloudflare": cf_result,
+    }
 
 
 @router.post("/domains/invite")

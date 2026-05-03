@@ -15,6 +15,7 @@ from models.domain_invite import DomainInvite
 from models.user import User, UserRole
 from services.cloudflare_service import CloudflareService
 from services.dns_guide_service import DNSGuideService
+from smtp.dkim import generate_dkim_keypair, save_dkim_private_key
 
 
 class DomainService:
@@ -77,7 +78,12 @@ class DomainService:
 
         domain.owner_user_id = admin_user.id if not existing_user else existing_user.id
 
-        # 3 ── DNS setup ───────────────────────────────────────────────────
+        # 3 ── Generate per-domain DKIM key pair ─────────────────────────────
+        private_pem, pub_b64, dkim_txt_value = generate_dkim_keypair(domain_name)
+        save_dkim_private_key(domain_name, private_pem)
+        domain.dkim_public_key = pub_b64  # store public key in DB
+
+        # 4 ── DNS setup ───────────────────────────────────────────────────
         dns_records: list[dict[str, str]] | None = None
         cloudflare_error: str | None = None
 
@@ -87,6 +93,7 @@ class DomainService:
                     domain=domain_name,
                     smtp_hostname=self.settings.smtp_hostname,
                     dkim_selector=self.settings.dkim_selector,
+                    dkim_txt_value=dkim_txt_value,
                     token=cloudflare_token,
                 )
                 domain.cloudflare_zone_id = zone_id
@@ -95,8 +102,8 @@ class DomainService:
                 # Don't fail the whole request; surface the error as a warning
                 cloudflare_error = str(exc)
         else:
-            # Return the manual DNS guide so the UI can display it
-            dns_records = self.dns_guide.records_for_domain(domain_name)
+            # Return the manual DNS guide (includes the freshly generated DKIM record)
+            dns_records = self.dns_guide.records_for_domain(domain_name, dkim_txt_value=dkim_txt_value)
 
         await self.db.commit()
         await self.db.refresh(domain)

@@ -48,27 +48,31 @@ class CloudflareService:
         domain: str,
         smtp_hostname: str,
         dkim_selector: str,
+        dkim_txt_value: str,
         token: str | None = None,
     ) -> str:
         """
         Automatically create all email DNS records for a domain via Cloudflare.
+        Includes MX, SPF, DMARC, and the DKIM TXT record so that outbound mail
+        shows 'signed-by: <domain>' instead of the mail server's own domain.
         Returns the Cloudflare zone_id used.
-        Raises httpx.HTTPStatusError if the API call fails.
         """
         zone_id = await self.get_zone_id(domain, token=token)
         if not zone_id:
             raise ValueError(f"No Cloudflare zone found for domain '{domain}'. Make sure the domain is added to Cloudflare first.")
 
         records = [
-            ("MX",  domain,                          f"10 {smtp_hostname}"),
-            ("TXT", domain,                          "v=spf1 mx -all"),
-            ("TXT", f"_dmarc.{domain}",              f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}"),
+            ("MX",  domain,                               f"10 {smtp_hostname}"),
+            ("TXT", domain,                               "v=spf1 mx -all"),
+            ("TXT", f"_dmarc.{domain}",                  f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}"),
+            # Per-domain DKIM — makes 'signed-by' match the client domain
+            ("TXT", f"{dkim_selector}._domainkey.{domain}", dkim_txt_value),
         ]
         for rtype, rname, rcontent in records:
             try:
                 await self.create_dns_record(zone_id, rtype, rname, rcontent, token=token)
             except httpx.HTTPStatusError:
-                # Record may already exist – ignore duplicate errors (81057)
+                # Record may already exist (error code 81057) — ignore
                 pass
 
         return zone_id
