@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 import { Providers } from "@/components/layout/Providers";
 import { cn } from "@/lib/utils";
 
-const inter = Inter({ subsets: ["latin"] });
-
 export const metadata: Metadata = {
-  title: "Email Platform",
+  title: "MailOS — Self-Hosted Email Platform",
   description: "Self-hosted email platform",
 };
 
@@ -21,9 +18,9 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("font-sans", GeistSans.variable)}
+      className={cn(GeistSans.variable, "antialiased")}
     >
-      <body className={inter.className}>
+      <body className={GeistSans.className}>
         <Providers attribute="class" defaultTheme="system" enableSystem>
           {children}
         </Providers>
