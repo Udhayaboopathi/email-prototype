@@ -1,12 +1,18 @@
+"""Domain service – handles domain creation, admin provisioning, and DNS setup."""
+from __future__ import annotations
+
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
+from core.security import hash_password
 from models.domain import Domain
 from models.domain_invite import DomainInvite
+from models.user import User, UserRole
 from services.cloudflare_service import CloudflareService
 from services.dns_guide_service import DNSGuideService
 
@@ -15,8 +21,91 @@ class DomainService:
     def __init__(self, db: AsyncSession):
         self.db = db
         settings = get_settings()
+        self.settings = settings
         self.cloudflare = CloudflareService(settings.cloudflare_api_token)
         self.dns_guide = DNSGuideService()
+
+    # ─── Core creation ────────────────────────────────────────────────────────
+
+    async def create_domain_full(
+        self,
+        *,
+        name: str,
+        admin_email: str,
+        admin_password: str,
+        owner_user_id: str | None = None,
+        storage_quota_mb: int | None = None,
+        dns_mode: Literal["auto", "manual"] = "manual",
+        cloudflare_token: str | None = None,
+    ) -> tuple[Domain, User, list[dict[str, str]] | None]:
+        """
+        Full domain onboarding in one transaction:
+          1. Create the Domain row.
+          2. Create/find the domain admin User account.
+          3. If dns_mode='auto', call Cloudflare to set up DNS records.
+          4. Return (domain, admin_user, dns_guide_records | None).
+        """
+        domain_name = name.lower().strip()
+
+        # 1 ── Create domain row ────────────────────────────────────────────
+        domain = Domain(
+            name=domain_name,
+            is_verified=False,
+            is_suspended=False,
+            owner_user_id=owner_user_id,
+            storage_quota_mb=storage_quota_mb,
+        )
+        self.db.add(domain)
+        await self.db.flush()  # get domain.id without committing yet
+
+        # 2 ── Create domain admin user ────────────────────────────────────
+        existing_user = await self.db.scalar(select(User).where(User.email == admin_email.lower()))
+        if existing_user:
+            # Assign the existing user as domain admin for this domain
+            existing_user.role = UserRole.domain_admin
+            existing_user.domain_id = domain.id
+            admin_user = existing_user
+        else:
+            admin_user = User(
+                email=admin_email.lower(),
+                password_hash=hash_password(admin_password),
+                role=UserRole.domain_admin,
+                domain_id=domain.id,
+                is_active=True,
+            )
+            self.db.add(admin_user)
+
+        domain.owner_user_id = admin_user.id if not existing_user else existing_user.id
+
+        # 3 ── DNS setup ───────────────────────────────────────────────────
+        dns_records: list[dict[str, str]] | None = None
+        cloudflare_error: str | None = None
+
+        if dns_mode == "auto" and cloudflare_token:
+            try:
+                zone_id = await self.cloudflare.setup_email_dns(
+                    domain=domain_name,
+                    smtp_hostname=self.settings.smtp_hostname,
+                    dkim_selector=self.settings.dkim_selector,
+                    token=cloudflare_token,
+                )
+                domain.cloudflare_zone_id = zone_id
+                domain.is_verified = True  # DNS is auto-configured → mark verified
+            except Exception as exc:
+                # Don't fail the whole request; surface the error as a warning
+                cloudflare_error = str(exc)
+        else:
+            # Return the manual DNS guide so the UI can display it
+            dns_records = self.dns_guide.records_for_domain(domain_name)
+
+        await self.db.commit()
+        await self.db.refresh(domain)
+        if not existing_user:
+            await self.db.refresh(admin_user)
+
+        return domain, admin_user, dns_records, cloudflare_error
+
+    # ─── Legacy helpers (kept for backward compat) ───────────────────────────
 
     async def create_domain(self, name: str, owner_user_id: str | None = None) -> Domain:
         domain = Domain(name=name.lower().strip(), is_verified=False, owner_user_id=owner_user_id)

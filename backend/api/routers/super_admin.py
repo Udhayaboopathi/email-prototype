@@ -13,6 +13,7 @@ from models.user import User, UserRole
 from schemas.admin import AuditLogResponse
 from schemas.domain import DomainCreate, DomainResponse
 from services.domain_service import DomainService
+from services.cloudflare_service import CloudflareService
 
 router = APIRouter(prefix="/super-admin", tags=["super-admin"])
 
@@ -42,19 +43,43 @@ async def get_stats(
 
 # ─── Domains ──────────────────────────────────────────────────────────────────
 
-@router.post("/domains", response_model=DomainResponse)
+@router.post("/domains", response_model=None, status_code=201)
 async def create_domain(
     payload: DomainCreate,
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(UserRole.super_admin)),
 ):
-    domain = await DomainService(db).create_domain(payload.name, user.id)
-    return DomainResponse(
-        id=domain.id,
-        name=domain.name,
-        is_verified=domain.is_verified,
-        created_at=domain.created_at,
+    """
+    Full domain onboarding:
+    - Creates the domain
+    - Creates the domain admin user with provided email + password
+    - If dns_mode='auto' and cloudflare_token provided, auto-configures DNS via Cloudflare
+    - If dns_mode='manual', returns DNS records the admin must configure manually
+    """
+    domain, admin_user, dns_records, cf_error = await DomainService(db).create_domain_full(
+        name=payload.name,
+        admin_email=payload.admin_email,
+        admin_password=payload.admin_password,
+        owner_user_id=user.id,
+        storage_quota_mb=payload.storage_quota_mb,
+        dns_mode=payload.dns_mode,
+        cloudflare_token=payload.cloudflare_token,
     )
+    return {
+        "domain": {
+            "id": domain.id,
+            "name": domain.name,
+            "is_verified": domain.is_verified,
+            "is_suspended": domain.is_suspended,
+            "storage_quota_mb": domain.storage_quota_mb,
+            "cloudflare_zone_id": domain.cloudflare_zone_id,
+            "created_at": domain.created_at,
+        },
+        "admin_email": admin_user.email,
+        "dns_mode": payload.dns_mode,
+        "dns_records": dns_records,  # None if auto mode
+        "cloudflare_error": cf_error,  # None if no error
+    }
 
 
 @router.get("/domains", response_model=list[DomainResponse])
@@ -64,7 +89,15 @@ async def list_domains(
 ):
     rows = await db.scalars(select(Domain).order_by(Domain.created_at.desc()))
     return [
-        DomainResponse(id=row.id, name=row.name, is_verified=row.is_verified, created_at=row.created_at)
+        DomainResponse(
+            id=row.id,
+            name=row.name,
+            is_verified=row.is_verified,
+            is_suspended=getattr(row, "is_suspended", False),
+            storage_quota_mb=getattr(row, "storage_quota_mb", None),
+            cloudflare_zone_id=getattr(row, "cloudflare_zone_id", None),
+            created_at=row.created_at,
+        )
         for row in rows
     ]
 
