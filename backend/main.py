@@ -33,14 +33,19 @@ from api.routers import (
     webhooks,
 )
 from config import get_settings
+from database import Base, engine
 from imap.server import create_imap_server
 from smtp.server import create_smtp_servers
+from seed import seed as seed_super_admin
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    await seed_super_admin()
     smtp25, smtp587 = await create_smtp_servers()
     imap_task = asyncio.create_task(create_imap_server())
     try:

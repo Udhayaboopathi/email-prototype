@@ -4,12 +4,14 @@ from sqlalchemy import select
 
 from config import get_settings
 from core.security import hash_password
-from database import SessionLocal
+from database import Base, SessionLocal, engine
 from models.user import User, UserRole
 
 
 async def seed() -> None:
     settings = get_settings()
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
     async with SessionLocal() as session:
         existing = await session.scalar(select(User).where(User.email == settings.super_admin_email))
         if not existing:
