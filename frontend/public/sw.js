@@ -17,6 +17,11 @@ self.addEventListener("fetch", event => {
   const request = event.request;
   if (request.method !== "GET") return;
 
+  // Only handle http/https — skip chrome-extension://, data:, blob:, etc.
+  // cache.put() throws a TypeError for non-http(s) schemes.
+  const url = new URL(request.url);
+  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+
   if (request.url.includes("/api/")) {
     event.respondWith(
       fetch(request).catch(
@@ -34,8 +39,11 @@ self.addEventListener("fetch", event => {
     caches.match(request).then(cached => {
       const networkFetch = fetch(request)
         .then(response => {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, cloned));
+          // Only cache valid responses from our own origin
+          if (response && response.status === 200 && response.type !== "opaque") {
+            const cloned = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, cloned));
+          }
           return response;
         })
         .catch(() => cached || caches.match("/offline"));

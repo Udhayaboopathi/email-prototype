@@ -39,7 +39,13 @@ async def my_domain(
     if not domain:
         raise HTTPException(status_code=404, detail="Domain not found")
     return DomainResponse(
-        id=domain.id, name=domain.name, is_verified=domain.is_verified, created_at=domain.created_at
+        id=domain.id,
+        name=domain.name,
+        is_verified=domain.is_verified,
+        is_suspended=getattr(domain, "is_suspended", False),
+        storage_quota_mb=getattr(domain, "storage_quota_mb", None),
+        cloudflare_zone_id=getattr(domain, "cloudflare_zone_id", None),
+        created_at=domain.created_at,
     )
 
 

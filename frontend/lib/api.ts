@@ -169,10 +169,13 @@ export const updateSuperAdminSettings = async (data: Record<string, unknown>) =>
 export const getDomainAdminStats = async (): Promise<DomainAdminStats> =>
   (await axiosInstance.get("/domain-admin/stats")).data;
 
-// Backend route: GET /domain-admin/dns-records (alias for /dns-guide)
-export const getDomainDnsRecords = async (): Promise<{
-  records: DnsRecord[];
-}> => (await axiosInstance.get("/domain-admin/dns-records")).data;
+// Backend route: GET /domain-admin/dns-records — returns { records: DnsRecord[] }
+// We unwrap so callers always get a plain array.
+export const getDomainDnsRecords = async (): Promise<DnsRecord[]> => {
+  const data = (await axiosInstance.get("/domain-admin/dns-records")).data;
+  // Normalise: backend wraps in { records: [...] }
+  return Array.isArray(data) ? data : (data?.records ?? []);
+};
 
 export const getDomainUsers = async () =>
   (await axiosInstance.get("/domain-admin/users")).data;

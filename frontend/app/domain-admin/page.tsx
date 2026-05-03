@@ -186,12 +186,7 @@ export default function DomainAdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {(dnsRecords as Array<{
-                    type: string;
-                    name: string;
-                    value: string;
-                    purpose?: string;
-                  }>).map((record, i) => (
+                  {dnsRecords.map((record, i) => (
                     <tr key={i} className="text-gray-700 dark:text-gray-300">
                       <td className="py-2 pr-4">
                         <span className="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-bold">
