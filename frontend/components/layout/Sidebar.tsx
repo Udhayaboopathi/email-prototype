@@ -22,6 +22,11 @@ import {
   Trash2,
   Star,
   AlertOctagon,
+  HardDrive,
+  Share2,
+  Search,
+  Clock,
+  Mailbox,
 } from "lucide-react";
 import { UserRole } from "@/types";
 
@@ -39,9 +44,14 @@ const superAdminNav = [
 
 const domainAdminNav = [
   { name: "Dashboard", href: "/domain-admin", icon: LayoutDashboard },
+  { name: "Mailboxes", href: "/domain-admin/mailboxes", icon: Mailbox },
   { name: "Users", href: "/domain-admin/users", icon: Users },
-  { name: "Mailboxes", href: "/domain-admin/mailboxes", icon: Mail },
+  { name: "Shared Mailboxes", href: "/domain-admin/shared-mailboxes", icon: Share2 },
   { name: "Security", href: "/domain-admin/security", icon: Shield },
+  { name: "Whitelabel", href: "/domain-admin/whitelabel", icon: Globe },
+  { name: "Backup", href: "/domain-admin/backup", icon: HardDrive },
+  { name: "eDiscovery", href: "/domain-admin/ediscovery", icon: Search },
+  { name: "Retention", href: "/domain-admin/retention", icon: Clock },
   { name: "Settings", href: "/domain-admin/settings", icon: Settings },
 ];
 

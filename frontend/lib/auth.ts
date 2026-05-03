@@ -1,53 +1,65 @@
-import { Role, TokenPair } from "@/types";
+import { Role, TokenPair, UserRole } from "@/types";
 
-// Re-export useAuth hook
+// Re-export useAuth hook so layouts can import from one place
 export { useAuth } from "@/hooks/useAuth";
 
-const ACCESS_KEY = "mail.access_token";
-const REFRESH_KEY = "mail.refresh_token";
-const ROLE_KEY = "mail.role";
+const AUTH_STORAGE_KEY = "auth-storage"; // matches useAuth.ts
 
-// All localStorage helpers are SSR-safe (guarded by typeof window)
-
-export function setTokens(tokens: TokenPair): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ACCESS_KEY, tokens.access_token);
-  window.localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
-}
-
-export function setRole(role: Role): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ROLE_KEY, role);
-}
+// ─── Role helpers (read from Zustand persisted storage) ───────────────────────
+// These are used by page.tsx root route and redirectUser() for SSR-safe access.
 
 export function getRole(): Role | null {
   if (typeof window === "undefined") return null;
-  const role = window.localStorage.getItem(ROLE_KEY);
-  if (role === "super_admin" || role === "domain_admin" || role === "user") {
-    return role;
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const role = JSON.parse(raw)?.state?.user?.role as string | undefined;
+    if (role === "super_admin" || role === "domain_admin" || role === "user") {
+      return role as Role;
+    }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
-}
-
-export function clearTokens(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(ACCESS_KEY);
-  window.localStorage.removeItem(REFRESH_KEY);
-  window.localStorage.removeItem(ROLE_KEY);
 }
 
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(ACCESS_KEY);
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw)?.state?.accessToken ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function getRefreshToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(REFRESH_KEY);
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw)?.state?.refreshToken ?? null;
+  } catch {
+    return null;
+  }
 }
 
-export function roleHome(role: Role): string {
+export function clearTokens(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+// Kept for legacy callers — no-op since tokens are now stored via useAuth.login()
+export function setTokens(_tokens: TokenPair): void {}
+export function setRole(_role: Role): void {}
+
+export function roleHome(role: Role | UserRole | undefined | null): string {
   if (role === "super_admin") return "/super-admin";
   if (role === "domain_admin") return "/domain-admin";
   return "/mail/inbox";
+}
+
+export function redirectUser(role: Role | UserRole | undefined | null): string {
+  return roleHome(role);
 }

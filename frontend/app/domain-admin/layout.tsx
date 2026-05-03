@@ -14,6 +14,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Mail,
+  Globe,
+  HardDrive,
+  Share2,
+  Search,
+  Clock,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useAppStore } from "@/store";
@@ -28,9 +33,14 @@ import {
 
 const navItems = [
   { href: "/domain-admin", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/domain-admin/users", icon: Users, label: "Users" },
   { href: "/domain-admin/mailboxes", icon: Mailbox, label: "Mailboxes" },
+  { href: "/domain-admin/users", icon: Users, label: "Users" },
+  { href: "/domain-admin/shared-mailboxes", icon: Share2, label: "Shared Mailboxes" },
   { href: "/domain-admin/security", icon: ShieldCheck, label: "Security" },
+  { href: "/domain-admin/whitelabel", icon: Globe, label: "Whitelabel" },
+  { href: "/domain-admin/backup", icon: HardDrive, label: "Backup" },
+  { href: "/domain-admin/ediscovery", icon: Search, label: "eDiscovery" },
+  { href: "/domain-admin/retention", icon: Clock, label: "Retention" },
   { href: "/domain-admin/settings", icon: Settings, label: "Settings" },
 ];
 
@@ -174,7 +184,7 @@ export default function DomainAdminLayout({
     return <div>Loading session...</div>;
   }
 
-  if (!user || user.role !== "domain_admin") {
+  if (!user || (user.role !== "domain_admin" && user.role !== "super_admin")) {
     router.replace("/login");
     return null;
   }
