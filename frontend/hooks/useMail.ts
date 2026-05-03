@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-
-import { api } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth";
+import { listMail } from "@/lib/api";
 import { MailItem } from "@/types";
 
 export function useMail(folder: string) {
@@ -12,19 +10,19 @@ export function useMail(folder: string) {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const token = getAccessToken();
-    if (!token) {
-      setError("Not authenticated");
-      setLoading(false);
-      return;
-    }
     try {
       setLoading(true);
-      const rows = await api.listMail(token, folder);
-      setMessages(rows);
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch mail");
+      // Token is injected automatically by the axios interceptor in api.ts
+      const rows = await listMail(folder);
+      setMessages(Array.isArray(rows) ? rows : []);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (err as { response?: { data?: { detail?: string } } })?.response?.data
+              ?.detail ?? "Failed to fetch mail";
+      setError(msg);
     } finally {
       setLoading(false);
     }
