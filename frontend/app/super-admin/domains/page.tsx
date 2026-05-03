@@ -146,12 +146,23 @@ export default function DomainsPage() {
 
   const inviteMutation = useMutation({
     mutationFn: inviteDomainAdmin,
-    onSuccess: () => {
-      toast.success("Invitation sent successfully!");
+    onSuccess: (data: any) => {
       setInviteDialogOpen(false);
       setInviteEmail("");
       setInviteDomainId("");
       queryClient.invalidateQueries({ queryKey: ["domains"] });
+
+      if (data?.email_sent === false) {
+        // Email delivery failed — show invite URL so admin can share manually
+        toast.warning(
+          `Invite created but email delivery failed. Share this link manually:\n${data.invite_url}`,
+          { duration: 15000 }
+        );
+        // Also copy to clipboard automatically
+        navigator.clipboard.writeText(data.invite_url).catch(() => {});
+      } else {
+        toast.success(`Invitation email sent to ${data?.email || "the admin"}!`);
+      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.detail || "Failed to send invitation.");

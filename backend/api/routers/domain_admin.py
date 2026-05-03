@@ -21,6 +21,7 @@ from schemas.domain_admin import MailboxCreate
 from services.backup_service import create_domain_backup
 from services.domain_service import DomainService
 from services.dns_guide_service import DNSGuideService
+from services.email_service import send_domain_admin_invite
 import dns.resolver
 import dns.reversename
 from datetime import datetime as _dt
@@ -429,7 +430,22 @@ async def invite_admin(
     user=Depends(get_current_domain_admin),
 ):
     invite = await DomainService(db).invite_domain_admin(user.domain_id, payload.email)
-    return {"token": invite.token}
+
+    # Fetch domain name for the email
+    domain = await db.scalar(select(Domain).where(Domain.id == user.domain_id))
+    domain_name = domain.name if domain else str(user.domain_id)
+
+    email_sent = await send_domain_admin_invite(
+        to_email=payload.email,
+        domain_name=domain_name,
+        invite_token=invite.token,
+        invited_by_email=user.email,
+    )
+
+    from config import get_settings as _gs  # noqa: PLC0415
+    invite_url = f"{_gs().invite_base_url}/invite/{invite.token}"
+
+    return {"token": invite.token, "email_sent": email_sent, "invite_url": invite_url}
 
 
 # ─── API Keys ─────────────────────────────────────────────────────────────────
