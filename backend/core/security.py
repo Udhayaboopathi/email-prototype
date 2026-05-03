@@ -40,10 +40,10 @@ def verify_jwt(token: str) -> dict[str, Any]:
 decode_token = verify_jwt
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, role: str = "") -> str:
     settings = get_settings()
     return issue_jwt(
-        {"sub": user_id, "type": "access"},
+        {"sub": user_id, "type": "access", "role": role},
         timedelta(minutes=settings.access_token_expire_minutes),
     )
 

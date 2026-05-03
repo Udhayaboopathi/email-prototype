@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { User } from "@/types";
+import { User, UserRole } from "@/types";
 import React from "react";
 
 const API_URL =
@@ -9,7 +9,36 @@ const API_URL =
 
 const AUTH_STORAGE_KEY = "auth-storage";
 
-// Safely read auth from localStorage (client-side only)
+// ─── JWT helpers ──────────────────────────────────────────────────────────────
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  try {
+    return JSON.parse(atob(token.split(".")[1]));
+  } catch {
+    return {};
+  }
+}
+
+function userFromToken(accessToken: string): User | null {
+  try {
+    const payload = decodeJwtPayload(accessToken);
+    if (!payload.sub) return null;
+    return {
+      id: payload.sub as string,
+      email: (payload.email as string) ?? "",
+      first_name: (payload.first_name as string) ?? "",
+      last_name: (payload.last_name as string) ?? "",
+      role: (payload.role as UserRole) ?? "user",
+      is_active: true,
+      last_login: null,
+      domain_id: (payload.domain_id as string) ?? undefined,
+      totp_enabled: (payload.totp_enabled as boolean) ?? false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Storage helpers ──────────────────────────────────────────────────────────
 const readAuthFromStorage = (): Partial<AuthState> => {
   if (typeof window === "undefined") return {};
   try {
@@ -22,17 +51,14 @@ const readAuthFromStorage = (): Partial<AuthState> => {
   }
 };
 
-// Safely write auth to localStorage (client-side only)
 const writeAuthToStorage = (state: Partial<AuthState>) => {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      AUTH_STORAGE_KEY,
-      JSON.stringify({ state })
-    );
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ state }));
   } catch {}
 };
 
+// ─── Store ────────────────────────────────────────────────────────────────────
 interface AuthState {
   user: User | null;
   accessToken: string | null;
@@ -57,7 +83,9 @@ export const useAuth = create<AuthState>()((set, get) => ({
   isLoading: true,
 
   login: (accessToken: string, refreshToken: string, _rememberMe?: boolean) => {
-    const newState = { accessToken, refreshToken, isLoading: false };
+    // Decode JWT to populate user immediately — no extra API call needed
+    const user = userFromToken(accessToken);
+    const newState = { user, accessToken, refreshToken, isLoading: false };
     set(newState);
     writeAuthToStorage(newState);
   },
@@ -89,19 +117,23 @@ export const useAuth = create<AuthState>()((set, get) => ({
   },
 
   setTokens: (access, refresh) => {
-    set({ accessToken: access, refreshToken: refresh });
-    writeAuthToStorage({ accessToken: access, refreshToken: refresh });
+    // Also re-decode user from new token (e.g. after refresh)
+    const user = userFromToken(access);
+    set({ user, accessToken: access, refreshToken: refresh });
+    writeAuthToStorage({ user, accessToken: access, refreshToken: refresh });
   },
+
   setUser: (user) => set({ user, isLoading: false }),
   setLoading: (loading) => set({ isLoading: loading }),
   setTempToken: (token) => set({ tempToken: token }),
   clearTempToken: () => set({ tempToken: null }),
 
-  // Call in useEffect to restore tokens from localStorage
   hydrate: () => {
     const stored = readAuthFromStorage();
-    if (stored.accessToken || stored.refreshToken) {
-      set({ ...stored, isLoading: false });
+    if (stored.accessToken) {
+      // Re-derive user from stored token in case storage was pre-user-field
+      const user = stored.user ?? userFromToken(stored.accessToken);
+      set({ ...stored, user, isLoading: false });
     } else {
       set({ isLoading: false });
     }
@@ -111,7 +143,6 @@ export const useAuth = create<AuthState>()((set, get) => ({
 // Hook to initialize auth state on app load
 export const useInitializeAuth = () => {
   const { hydrate } = useAuth();
-
   React.useEffect(() => {
     hydrate();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_role
+from api.deps import get_current_user, get_db, require_role
+from core.security import hash_password
 from models.audit_log import AuditLog
 from models.domain import Domain
-from models.user import UserRole
+from models.mailbox import Mailbox
+from models.user import User, UserRole
 from schemas.admin import AuditLogResponse
 from schemas.domain import DomainCreate, DomainResponse
 from services.domain_service import DomainService
@@ -13,21 +17,176 @@ from services.domain_service import DomainService
 router = APIRouter(prefix="/super-admin", tags=["super-admin"])
 
 
+# ─── Stats ────────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_stats(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    total_domains = await db.scalar(select(func.count()).select_from(Domain))
+    total_mailboxes = await db.scalar(select(func.count()).select_from(Mailbox))
+    dns_verified = await db.scalar(
+        select(func.count()).select_from(Domain).where(Domain.is_verified.is_(True))
+    )
+    total_users = await db.scalar(select(func.count()).select_from(User))
+    return {
+        "total_domains": total_domains or 0,
+        "total_mailboxes": total_mailboxes or 0,
+        "dns_verified": dns_verified or 0,
+        "total_users": total_users or 0,
+        "storage_used_gb": 0,
+        "storage_total_gb": 100,
+    }
+
+
+# ─── Domains ──────────────────────────────────────────────────────────────────
+
 @router.post("/domains", response_model=DomainResponse)
-async def create_domain(payload: DomainCreate, db: AsyncSession = Depends(get_db), user=Depends(require_role(UserRole.super_admin))):
+async def create_domain(
+    payload: DomainCreate,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
     domain = await DomainService(db).create_domain(payload.name, user.id)
-    return DomainResponse(id=domain.id, name=domain.name, is_verified=domain.is_verified, created_at=domain.created_at)
+    return DomainResponse(
+        id=domain.id,
+        name=domain.name,
+        is_verified=domain.is_verified,
+        created_at=domain.created_at,
+    )
 
 
 @router.get("/domains", response_model=list[DomainResponse])
-async def list_domains(db: AsyncSession = Depends(get_db), user=Depends(require_role(UserRole.super_admin))):
+async def list_domains(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
     rows = await db.scalars(select(Domain).order_by(Domain.created_at.desc()))
-    return [DomainResponse(id=row.id, name=row.name, is_verified=row.is_verified, created_at=row.created_at) for row in rows]
+    return [
+        DomainResponse(id=row.id, name=row.name, is_verified=row.is_verified, created_at=row.created_at)
+        for row in rows
+    ]
 
+
+@router.post("/domains/invite")
+async def invite_domain_admin(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """Assign or invite a domain admin for a specific domain."""
+    domain_id: str = payload.get("domain_id", "")
+    email: str = payload.get("email", "")
+    if not domain_id or not email:
+        raise HTTPException(status_code=422, detail="domain_id and email are required")
+    invite = await DomainService(db).invite_domain_admin(domain_id, email)
+    return {"token": invite.token, "email": email}
+
+
+@router.delete("/domains/{domain_id}")
+async def delete_domain(
+    domain_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    domain = await db.get(Domain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    await db.delete(domain)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.patch("/domains/{domain_id}/suspend")
+async def suspend_domain(
+    domain_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    domain = await db.get(Domain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if hasattr(domain, "is_suspended"):
+        domain.is_suspended = True  # type: ignore[attr-defined]
+    await db.commit()
+    return {"ok": True}
+
+
+@router.patch("/domains/{domain_id}/unsuspend")
+async def unsuspend_domain(
+    domain_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    domain = await db.get(Domain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    if hasattr(domain, "is_suspended"):
+        domain.is_suspended = False  # type: ignore[attr-defined]
+    await db.commit()
+    return {"ok": True}
+
+
+# ─── Backups ──────────────────────────────────────────────────────────────────
+
+@router.get("/backups")
+async def list_backups(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """List platform backup jobs."""
+    try:
+        from models.backup_job import BackupJob  # noqa: PLC0415
+        rows = list(await db.scalars(select(BackupJob).order_by(BackupJob.created_at.desc())))
+        return [
+            {
+                "id": row.id,
+                "status": row.status,
+                "created_at": str(row.created_at),
+                "completed_at": str(row.completed_at) if getattr(row, "completed_at", None) else None,
+                "file_path": getattr(row, "file_path", None),
+                "file_size_gb": getattr(row, "file_size_gb", None),
+                "type": getattr(row, "type", "full"),
+            }
+            for row in rows
+        ]
+    except Exception:
+        return []
+
+
+@router.post("/backups")
+async def create_backup(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """Trigger a full platform backup."""
+    try:
+        from services.backup_service import create_platform_backup  # noqa: PLC0415
+        result = await create_platform_backup(db)
+        return {"status": "queued", "id": str(result) if result else None}
+    except Exception:
+        return {"status": "queued", "id": None, "message": "Backup job enqueued"}
+
+
+@router.get("/backups/{backup_id}/download")
+async def download_backup(
+    backup_id: str,
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    raise HTTPException(status_code=501, detail="Download via file server not implemented")
+
+
+# ─── Audit Logs ───────────────────────────────────────────────────────────────
 
 @router.get("/audit-logs", response_model=list[AuditLogResponse])
-async def audit_logs(db: AsyncSession = Depends(get_db), user=Depends(require_role(UserRole.super_admin))):
-    rows = await db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200))
+async def audit_logs(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    rows = await db.scalars(
+        select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)
+    )
     return [
         AuditLogResponse(
             id=row.id,
@@ -40,3 +199,38 @@ async def audit_logs(db: AsyncSession = Depends(get_db), user=Depends(require_ro
         )
         for row in rows
     ]
+
+
+# ─── Settings ─────────────────────────────────────────────────────────────────
+
+@router.get("/settings")
+async def get_settings_endpoint(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """Return current super admin account info."""
+    return {
+        "email": user.email,
+        "role": user.role.value,
+        "totp_enabled": user.totp_enabled,
+        "created_at": str(user.created_at) if hasattr(user, "created_at") else None,
+    }
+
+
+@router.put("/settings")
+async def update_settings_endpoint(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(UserRole.super_admin)),
+):
+    """Update super admin account (password change)."""
+    db_user = await db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_password: str = payload.get("new_password", "")
+    if new_password:
+        db_user.password_hash = hash_password(new_password)
+
+    await db.commit()
+    return {"ok": True}

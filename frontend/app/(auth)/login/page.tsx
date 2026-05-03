@@ -63,8 +63,12 @@ function LoginPageContent() {
         setStep("totp");
       } else {
         login(data.access_token, data.refresh_token, rememberMe);
-        const role = useAuth.getState().user?.role;
-        redirectUser(role);
+        try {
+          const payload = JSON.parse(atob(data.access_token.split(".")[1]));
+          redirectUser(payload.role);
+        } catch {
+          router.push("/mail/inbox");
+        }
       }
     },
     onError: (err: any) => {
@@ -85,8 +89,12 @@ function LoginPageContent() {
     onSuccess: (data) => {
       setError(null);
       login(data.access_token, data.refresh_token, rememberMe);
-      const role = useAuth.getState().user?.role;
-      redirectUser(role);
+      try {
+        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
+        redirectUser(payload.role);
+      } catch {
+        router.push("/mail/inbox");
+      }
     },
     onError: () => {
       setError("Invalid code, please try again.");

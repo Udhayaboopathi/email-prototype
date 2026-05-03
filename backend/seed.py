@@ -21,12 +21,15 @@ async def seed() -> None:
             )
             session.add(user)
             await session.commit()
-
-    print(f"Super admin created. Login at {settings.frontend_url}/login")
-    print("1. Add your first domain in the super admin panel")
-    print("2. Configure DNS records or enter Cloudflare token")
-    print("3. Assign a domain admin")
-    print("4. Create mailboxes")
+            print(f"✓ Super admin created: {settings.super_admin_email}")
+            print(f"  Login at {settings.frontend_url}/login")
+            print("  Next steps:")
+            print("  1. Add your first domain in the super admin panel")
+            print("  2. Configure DNS records or enter Cloudflare token")
+            print("  3. Assign a domain admin")
+            print("  4. Create mailboxes")
+        else:
+            print(f"⚠  Super admin already exists ({settings.super_admin_email}) — skipping creation.")
 
 
 if __name__ == "__main__":
